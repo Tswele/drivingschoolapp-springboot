@@ -1,0 +1,2 @@
+web: java -Dserver.port=$PORT -jar target/driving-school-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
+

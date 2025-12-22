@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: driving-school-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: render
+      - key: PORT
+        value: 8080
+      - key: DB_URL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: FRONTEND_URL
+        value: https://driving-school-hub.netlify.app
+      - key: JAVA_OPTS
+        value: -Xmx512m -Xms256m
+
