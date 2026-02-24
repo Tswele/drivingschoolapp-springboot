@@ -3,6 +3,7 @@ package com.example.drivingschool.config;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 
 @Configuration
 @Profile("render")
+@ConditionalOnProperty(name = "USE_POSTGRES", havingValue = "true")
 public class DatabaseConfig {
 
     /** Internal URL (from Render when DB is linked); host may be short name that does not resolve in some setups. */
