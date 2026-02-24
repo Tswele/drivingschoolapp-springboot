@@ -26,11 +26,38 @@ public class DatabaseConfig {
     @Value("${EXTERNAL_DATABASE_URL:}")
     private String externalDatabaseUrl;
 
+    /** Optional: use DB_URL + DB_USER + DB_PASSWORD instead of DATABASE_URL (no URL parsing). */
+    @Value("${DB_URL:}")
+    private String dbUrl;
+    @Value("${DB_USER:}")
+    private String dbUser;
+    @Value("${DB_PASSWORD:}")
+    private String dbPassword;
+
     @Bean
     @Primary
     public DataSource dataSource() {
         HikariConfig config = new HikariConfig();
-        // Prefer external URL if set (resolvable hostname); otherwise use DATABASE_URL (internal)
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(2);
+        config.setConnectionTimeout(60000);
+        config.setInitializationFailTimeout(-1);  // don't block startup; pool connects on first use
+        config.setIdleTimeout(600000);
+        config.setMaxLifetime(1800000);
+        config.setDriverClassName("org.postgresql.Driver");
+
+        // Path 1: DB_URL + DB_USER + DB_PASSWORD (no parsing; use if DATABASE_URL gives EOF)
+        if (dbUrl != null && !dbUrl.isEmpty() && !dbUrl.startsWith("${")) {
+            String jdbcUrl = dbUrl.startsWith("jdbc:") ? dbUrl : "jdbc:postgresql://" + dbUrl;
+            if (!jdbcUrl.contains("ssl=")) jdbcUrl += (jdbcUrl.contains("?") ? "&" : "?") + "ssl=true&sslmode=require";
+            config.setJdbcUrl(jdbcUrl);
+            config.setUsername(dbUser != null ? dbUser : "");
+            config.setPassword(dbPassword != null ? dbPassword : "");
+            System.out.println("Using DB_URL (Host from env). SSL added if missing.");
+            return new HikariDataSource(config);
+        }
+
+        // Path 2: EXTERNAL_DATABASE_URL or DATABASE_URL (parsed)
         String urlToUse = (externalDatabaseUrl != null && !externalDatabaseUrl.isEmpty() && !externalDatabaseUrl.startsWith("${"))
             ? externalDatabaseUrl
             : databaseUrl;
@@ -73,34 +100,9 @@ public class DatabaseConfig {
                     + (urlToUse == externalDatabaseUrl ? " (EXTERNAL_DATABASE_URL)" : " (DATABASE_URL)"));
                 
                 config.setJdbcUrl(dbUrl);
-                config.setDriverClassName("org.postgresql.Driver");
                 // Do not set username/password - they are in the JDBC URL
                 
-                // Connection pool: longer timeouts for Render (DB may be waking from pause)
-                config.setMaximumPoolSize(10);
-                config.setMinimumIdle(2);
-                config.setConnectionTimeout(60000);      // 60s wait for first connection
-                config.setInitializationFailTimeout(120000); // 2 min before failing startup (allows retries)
-                config.setIdleTimeout(600000);
-                config.setMaxLifetime(1800000);
-                
-                // Retry connection a few times (Render free DB may be waking from pause)
-                int maxAttempts = 5;
-                int waitSeconds = 15;
-                Exception lastException = null;
-                for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-                    try {
-                        System.out.println("DB connection attempt " + attempt + "/" + maxAttempts + "...");
-                        return new HikariDataSource(config);
-                    } catch (Exception e) {
-                        lastException = e;
-                        if (attempt < maxAttempts) {
-                            System.err.println("Connection failed, retrying in " + waitSeconds + "s: " + e.getMessage());
-                            try { Thread.sleep(waitSeconds * 1000L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
-                        }
-                    }
-                }
-                throw lastException != null ? new RuntimeException("Database connection failed after " + maxAttempts + " attempts", lastException) : new RuntimeException("Database connection failed");
+                return new HikariDataSource(config);
                 
             } catch (URISyntaxException | ArrayIndexOutOfBoundsException e) {
                 System.err.println("Failed to parse database URL: " + e.getMessage());
@@ -109,8 +111,8 @@ public class DatabaseConfig {
                 throw new RuntimeException("Failed to configure database from DATABASE_URL/EXTERNAL_DATABASE_URL", e);
             }
         } else {
-            System.err.println("DATABASE_URL (and EXTERNAL_DATABASE_URL) are empty or not set.");
-            throw new RuntimeException("DATABASE_URL or EXTERNAL_DATABASE_URL environment variable is required for render profile");
+            System.err.println("No DB config: set DATABASE_URL, EXTERNAL_DATABASE_URL, or DB_URL+DB_USER+DB_PASSWORD");
+            throw new RuntimeException("DATABASE_URL, EXTERNAL_DATABASE_URL, or DB_URL+DB_USER+DB_PASSWORD is required for render profile");
         }
     }
 }
