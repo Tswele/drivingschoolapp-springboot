@@ -16,18 +16,27 @@ import java.net.URISyntaxException;
 @Profile("render")
 public class DatabaseConfig {
 
+    /** Internal URL (from Render when DB is linked); host may be short name that does not resolve in some setups. */
     @Value("${DATABASE_URL:}")
     private String databaseUrl;
+
+    /** External URL (from Render Connect → External). Use this if you get UnknownHostException for the DB host. */
+    @Value("${EXTERNAL_DATABASE_URL:}")
+    private String externalDatabaseUrl;
 
     @Bean
     @Primary
     public DataSource dataSource() {
         HikariConfig config = new HikariConfig();
-        
-        if (databaseUrl != null && !databaseUrl.isEmpty() && !databaseUrl.startsWith("${")) {
+        // Prefer external URL if set (resolvable hostname); otherwise use DATABASE_URL (internal)
+        String urlToUse = (externalDatabaseUrl != null && !externalDatabaseUrl.isEmpty() && !externalDatabaseUrl.startsWith("${"))
+            ? externalDatabaseUrl
+            : databaseUrl;
+
+        if (urlToUse != null && !urlToUse.isEmpty() && !urlToUse.startsWith("${")) {
             try {
                 // Handle postgresql:// or postgres:// URLs
-                String url = databaseUrl;
+                String url = urlToUse;
                 if (url.startsWith("postgres://")) {
                     url = url.replace("postgres://", "postgresql://");
                 }
@@ -38,15 +47,17 @@ public class DatabaseConfig {
                 String password = userInfo.length > 1 ? userInfo[1] : "";
                 
                 // Build JDBC URL - include port if specified, otherwise use default 5432
+                // Add SSL parameters for Render PostgreSQL (required for external connections)
                 int port = dbUri.getPort();
                 String dbUrl;
                 if (port > 0) {
-                    dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ':' + port + dbUri.getPath();
+                    dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ':' + port + dbUri.getPath() + "?ssl=true&sslmode=require";
                 } else {
-                    dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ":5432" + dbUri.getPath();
+                    dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ":5432" + dbUri.getPath() + "?ssl=true&sslmode=require";
                 }
                 
-                System.out.println("Parsed DATABASE_URL - Host: " + dbUri.getHost() + ", Database: " + dbUri.getPath());
+                System.out.println("Parsed DB URL - Host: " + dbUri.getHost() + ", Database: " + dbUri.getPath()
+                    + (urlToUse == externalDatabaseUrl ? " (EXTERNAL_DATABASE_URL)" : " (DATABASE_URL)"));
                 
                 config.setJdbcUrl(dbUrl);
                 config.setUsername(username);
@@ -61,14 +72,14 @@ public class DatabaseConfig {
                 config.setMaxLifetime(1800000);
                 
             } catch (URISyntaxException | ArrayIndexOutOfBoundsException e) {
-                System.err.println("Failed to parse DATABASE_URL: " + e.getMessage());
-                System.err.println("DATABASE_URL value: " + databaseUrl);
+                System.err.println("Failed to parse database URL: " + e.getMessage());
+                System.err.println("URL value: " + urlToUse);
                 e.printStackTrace();
-                throw new RuntimeException("Failed to configure database from DATABASE_URL", e);
+                throw new RuntimeException("Failed to configure database from DATABASE_URL/EXTERNAL_DATABASE_URL", e);
             }
         } else {
-            System.err.println("DATABASE_URL is empty or not set. Value: " + databaseUrl);
-            throw new RuntimeException("DATABASE_URL environment variable is required for render profile");
+            System.err.println("DATABASE_URL (and EXTERNAL_DATABASE_URL) are empty or not set.");
+            throw new RuntimeException("DATABASE_URL or EXTERNAL_DATABASE_URL environment variable is required for render profile");
         }
         
         return new HikariDataSource(config);
