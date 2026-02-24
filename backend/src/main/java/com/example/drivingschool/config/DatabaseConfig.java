@@ -42,19 +42,27 @@ public class DatabaseConfig {
                 }
                 
                 URI dbUri = new URI(url);
-                String[] userInfo = dbUri.getUserInfo().split(":");
-                String username = userInfo[0];
-                String password = userInfo.length > 1 ? userInfo[1] : "";
+                // Split on first ':' only so passwords containing ':' are preserved
+                String userInfo = dbUri.getUserInfo();
+                String username;
+                String password;
+                if (userInfo != null && userInfo.contains(":")) {
+                    int firstColon = userInfo.indexOf(':');
+                    username = userInfo.substring(0, firstColon);
+                    password = userInfo.substring(firstColon + 1);
+                } else {
+                    username = userInfo != null ? userInfo : "";
+                    password = "";
+                }
                 
                 // Build JDBC URL - include port if specified, otherwise use default 5432
-                // Add SSL parameters for Render PostgreSQL (required for external connections)
-                int port = dbUri.getPort();
-                String dbUrl;
-                if (port > 0) {
-                    dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ':' + port + dbUri.getPath() + "?ssl=true&sslmode=require";
-                } else {
-                    dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ":5432" + dbUri.getPath() + "?ssl=true&sslmode=require";
-                }
+                // SSL required for Render external; allow extra time if DB is waking from pause
+                int port = dbUri.getPort() > 0 ? dbUri.getPort() : 5432;
+                String path = dbUri.getPath();
+                if (path != null && path.startsWith("/")) path = path.substring(1);
+                String dbUrl = "jdbc:postgresql://" + dbUri.getHost() + ':' + port + "/" + (path != null ? path : "")
+                    + "?ssl=true&sslmode=require"
+                    + "&connectTimeout=60&socketTimeout=60";
                 
                 System.out.println("Parsed DB URL - Host: " + dbUri.getHost() + ", Database: " + dbUri.getPath()
                     + (urlToUse == externalDatabaseUrl ? " (EXTERNAL_DATABASE_URL)" : " (DATABASE_URL)"));
@@ -64,10 +72,11 @@ public class DatabaseConfig {
                 config.setPassword(password);
                 config.setDriverClassName("org.postgresql.Driver");
                 
-                // Connection pool settings
+                // Connection pool: longer timeouts for Render (DB may be waking from pause)
                 config.setMaximumPoolSize(10);
                 config.setMinimumIdle(2);
-                config.setConnectionTimeout(30000);
+                config.setConnectionTimeout(60000);      // 60s wait for first connection
+                config.setInitializationFailTimeout(90000); // 90s before failing startup
                 config.setIdleTimeout(600000);
                 config.setMaxLifetime(1800000);
                 
